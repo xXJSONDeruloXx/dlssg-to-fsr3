@@ -11,16 +11,17 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: write
+
 env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  VCPKG_FEATURE_FLAGS: dependencygraph
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
 
 jobs:
   build-and-release:
-    runs-on: windows-latest
-    
-    strategy:
-      matrix:
-        variant: [universal, nvngxwrapper, dtwrapper]
+    runs-on: windows-2022
     
     steps:
     - name: Checkout repository
@@ -29,87 +30,46 @@ jobs:
         submodules: recursive
         fetch-depth: 0
 
-    - name: Setup vcpkg
-      uses: lukka/run-vcpkg@v11
-      with:
-        vcpkgGitCommitId: '53bef8994c541b6561884a8395ea35715ece75db'
-
-    - name: Export GitHub Actions cache environment variables
+    - name: Set up GitHub Actions cache environment
       uses: actions/github-script@v7
       with:
         script: |
           core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
           core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
-    - name: Setup MSBuild
-      uses: microsoft/setup-msbuild@v2
+    - name: Set up Vcpkg environment
+      shell: bash
+      run: |
+        echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> $GITHUB_ENV
 
-    - name: Install Vulkan SDK
+    - name: Set up VS2022 toolset
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Install and set up Vulkan SDK
       uses: humbletim/install-vulkan-sdk@v1.1.1
       with:
         version: latest
-        cache: true
+        cache: false
 
-    - name: Cache FidelityFX SDK build
-      uses: actions/cache@v4
-      with:
-        path: dependencies/FidelityFX-SDK/sdk/bin
-        key: fidelityfx-sdk-${{ runner.os }}-${{ hashFiles('dependencies/FidelityFX-SDK/**/*.cmake', 'dependencies/FidelityFX-SDK/**/*.bat') }}
-        restore-keys: |
-          fidelityfx-sdk-${{ runner.os }}-
-
-    - name: Setup CMake
-      uses: lukka/get-cmake@latest
-
-    - name: Create CMakeUserEnvVars.json
-      shell: pwsh
-      run: |
-        $envVars = @{
-          "version" = 6
-          "configurePresets" = @(
-            @{
-              "name" = "config-envvars"
-              "hidden" = $true
-              "environment" = @{
-                "GAME_ROOT_DIRECTORY" = "C:/temp/game"
-                "GAME_DEBUGGER_CMDLINE" = "C:/temp/game/game.exe"
-              }
-            }
-          )
-        }
-        $envVars | ConvertTo-Json -Depth 10 | Out-File -FilePath "CMakeUserEnvVars.json" -Encoding UTF8
-
-    - name: Build FidelityFX SDK
+    - name: Build and set up FidelityFX SDK
       shell: cmd
       run: |
-        cd dependencies\FidelityFX-SDK\sdk
-        if not exist "bin\ffx_sdk" call BuildFidelityFXSDK.bat
-        if not exist "bin\ffx_sdk" (
-          echo "FidelityFX SDK build failed"
-          exit /b 1
-        )
+        ${{ github.workspace }}/dependencies/Build-FFX-SDK.bat
 
-    - name: Configure CMake
-      uses: lukka/run-cmake@v10
-      with:
-        configurePreset: 'final-${{ matrix.variant }}'
-
-    - name: Build Release
-      uses: lukka/run-cmake@v10
-      with:
-        buildPreset: 'final-${{ matrix.variant }}-Release'
-
-    - name: Package
+    - name: Build dlssg-to-fsr3
       shell: pwsh
       run: |
-        cpack --preset final-${{ matrix.variant }}
+        ${{ github.workspace }}/Make-Release.ps1
 
     - name: Upload release artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: dlssg-to-fsr3-${{ matrix.variant }}-release
-        path: bin/built-packages/*.zip
-        retention-days: 90
+        name: 'dlssg-to-fsr3-release'
+        path: |
+          ${{ github.workspace }}/bin/built-packages/*.zip
+        if-no-files-found: error
 
   create-release:
     needs: build-and-release
@@ -120,8 +80,7 @@ jobs:
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
-        pattern: dlssg-to-fsr3-*-release
-        merge-multiple: true
+        name: dlssg-to-fsr3-release
 
     - name: Get tag name
       id: tag
