@@ -10,11 +10,6 @@ on:
 permissions:
   contents: read
 
-env:
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  VCPKG_FEATURE_FLAGS: dependencygraph
-  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-
 jobs:
   build:
     runs-on: windows-2022
@@ -26,38 +21,47 @@ jobs:
         submodules: recursive
         fetch-depth: 0
 
-    - name: Set up GitHub Actions cache environment
-      uses: actions/github-script@v7
-      with:
-        script: |
-          core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-          core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-    - name: Set up Vcpkg environment
-      shell: bash
+    - name: Set up VS2022 environment
+      shell: cmd
       run: |
-        echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> $GITHUB_ENV
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+        echo PATH=%PATH% >> %GITHUB_ENV%
+        echo INCLUDE=%INCLUDE% >> %GITHUB_ENV%
+        echo LIB=%LIB% >> %GITHUB_ENV%
+        echo LIBPATH=%LIBPATH% >> %GITHUB_ENV%
 
-    - name: Set up VS2022 toolset
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: x64
+    - name: Set up vcpkg
+      shell: pwsh
+      run: |
+        echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
-    - name: Install and set up Vulkan SDK
-      uses: humbletim/install-vulkan-sdk@v1.1.1
-      with:
-        version: latest
-        cache: false
+    - name: Install Vulkan SDK
+      shell: pwsh
+      run: |
+        $vulkanVersion = "1.3.290.0"
+        $vulkanUrl = "https://sdk.lunarg.com/sdk/download/$vulkanVersion/windows/VulkanSDK-$vulkanVersion-Installer.exe"
+        $vulkanInstaller = "$env:TEMP\VulkanSDK-Installer.exe"
+        
+        Write-Host "Downloading Vulkan SDK $vulkanVersion..."
+        Invoke-WebRequest -Uri $vulkanUrl -OutFile $vulkanInstaller
+        
+        Write-Host "Installing Vulkan SDK..."
+        Start-Process -FilePath $vulkanInstaller -ArgumentList @("/S") -Wait
+        
+        # Set environment variable
+        $vulkanPath = "C:\VulkanSDK\$vulkanVersion"
+        echo "VULKAN_SDK=$vulkanPath" >> $env:GITHUB_ENV
 
     - name: Build and set up FidelityFX SDK
       shell: cmd
       run: |
-        ${{ github.workspace }}/dependencies/Build-FFX-SDK.bat
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+        ${{ github.workspace }}\dependencies\Build-FFX-SDK.bat
 
     - name: Build dlssg-to-fsr3 (Universal Release only for CI)
-      shell: pwsh
+      shell: cmd
       run: |
-        # Just build universal release for CI speed
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
         cmake --preset final-universal
         cmake --build --preset final-universal-Release
         cpack --preset final-universal
@@ -67,6 +71,6 @@ jobs:
       with:
         name: 'dlssg-to-fsr3-ci-build'
         path: |
-          ${{ github.workspace }}/bin/built-packages/*.zip
+          ${{ github.workspace }}\bin\built-packages\*.zip
         if-no-files-found: error
         retention-days: 7
