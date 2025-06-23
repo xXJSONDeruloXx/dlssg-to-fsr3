@@ -2,9 +2,9 @@ name: Build dlssg-to-fsr3
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [ main, build, develop ]
   pull_request:
-    branches: [ main, master, develop ]
+    branches: [ main, build, develop ]
   workflow_dispatch:
 
 env:
