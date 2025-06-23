@@ -2,7 +2,9 @@ name: 'Build and publish artifacts'
 
 on:
   push:
-    branches: ['master', 'ci-test']
+    branches: ['master', 'ci-test', 'ci-test-upstream', 'main', 'build', 'develop']
+  pull_request:
+    branches: ['master', 'ci-test', 'ci-test-upstream', 'main', 'build', 'develop']
   workflow_dispatch:
 
 permissions:
