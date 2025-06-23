@@ -41,17 +41,28 @@ jobs:
         version: 1.4.309.0
         cache: true
 
+    - name: Build and set up FidelityFX SDK
+      shell: cmd
+      run: |
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+        echo "Updating FidelityFX SDK submodules..."
+        cd dependencies\FidelityFX-SDK
+        git submodule update --init --recursive
+        cd ..\..
+        echo "Building FidelityFX SDK..."
+        ${{ github.workspace }}\dependencies\Build-FFX-SDK.bat
+        echo "Verifying FidelityFX SDK build outputs..."
+        dir ${{ github.workspace }}\dependencies\FidelityFX-SDK\sdk\bin\ffx_sdk\
+
     - name: Install WinPixEventRuntime
       shell: pwsh
       run: |
-        # Install WinPixEventRuntime via NuGet
-        dotnet add package WinPixEventRuntime --version 1.0.240308001
-        
-        # Also download the DLL directly if needed
+        # Download the DLL directly from NuGet package
         $pixUrl = "https://www.nuget.org/api/v2/package/WinPixEventRuntime/1.0.240308001"
         $pixZip = "$env:TEMP\WinPixEventRuntime.zip"
         $pixDir = "$env:TEMP\WinPixEventRuntime"
         
+        Write-Host "Downloading WinPixEventRuntime package..."
         Invoke-WebRequest -Uri $pixUrl -OutFile $pixZip
         Expand-Archive -Path $pixZip -DestinationPath $pixDir -Force
         
@@ -66,19 +77,6 @@ jobs:
         } else {
           Write-Host "WinPixEventRuntime.dll not found in package, continuing without it"
         }
-
-    - name: Build and set up FidelityFX SDK
-      shell: cmd
-      run: |
-        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-        echo "Updating FidelityFX SDK submodules..."
-        cd dependencies\FidelityFX-SDK
-        git submodule update --init --recursive
-        cd ..\..
-        echo "Building FidelityFX SDK..."
-        ${{ github.workspace }}\dependencies\Build-FFX-SDK.bat
-        echo "Verifying FidelityFX SDK build outputs..."
-        dir ${{ github.workspace }}\dependencies\FidelityFX-SDK\sdk\bin\ffx_sdk\
 
     - name: Build dlssg-to-fsr3 (Universal Release only for CI)
       shell: cmd
