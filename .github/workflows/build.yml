@@ -41,16 +41,40 @@ jobs:
         $vulkanVersion = "1.3.290.0"
         $vulkanUrl = "https://sdk.lunarg.com/sdk/download/$vulkanVersion/windows/VulkanSDK-$vulkanVersion-Installer.exe"
         $vulkanInstaller = "$env:TEMP\VulkanSDK-Installer.exe"
+        $vulkanPath = "C:\VulkanSDK\$vulkanVersion"
+        
+        # Check if already installed
+        if (Test-Path "$vulkanPath\Bin\vulkaninfo.exe") {
+          Write-Host "Vulkan SDK already installed at $vulkanPath"
+          echo "VULKAN_SDK=$vulkanPath" >> $env:GITHUB_ENV
+          return
+        }
         
         Write-Host "Downloading Vulkan SDK $vulkanVersion..."
-        Invoke-WebRequest -Uri $vulkanUrl -OutFile $vulkanInstaller
+        $ProgressPreference = 'SilentlyContinue'  # Disable progress bar for faster download
+        Invoke-WebRequest -Uri $vulkanUrl -OutFile $vulkanInstaller -TimeoutSec 300
         
-        Write-Host "Installing Vulkan SDK..."
-        Start-Process -FilePath $vulkanInstaller -ArgumentList @("/S") -Wait
+        if (-not (Test-Path $vulkanInstaller)) {
+          throw "Failed to download Vulkan SDK installer"
+        }
         
-        # Set environment variable
-        $vulkanPath = "C:\VulkanSDK\$vulkanVersion"
-        echo "VULKAN_SDK=$vulkanPath" >> $env:GITHUB_ENV
+        $fileSize = (Get-Item $vulkanInstaller).Length / 1MB
+        Write-Host "Downloaded installer: $([math]::Round($fileSize, 2)) MB"
+        
+        Write-Host "Installing Vulkan SDK (this may take 2-5 minutes)..."
+        $process = Start-Process -FilePath $vulkanInstaller -ArgumentList @("/S") -Wait -PassThru
+        
+        if ($process.ExitCode -ne 0) {
+          throw "Vulkan SDK installation failed with exit code: $($process.ExitCode)"
+        }
+        
+        # Verify installation
+        if (Test-Path "$vulkanPath\Bin\vulkaninfo.exe") {
+          Write-Host "Vulkan SDK installed successfully at $vulkanPath"
+          echo "VULKAN_SDK=$vulkanPath" >> $env:GITHUB_ENV
+        } else {
+          throw "Vulkan SDK installation verification failed - vulkaninfo.exe not found"
+        }
 
     - name: Build and set up FidelityFX SDK
       shell: cmd
