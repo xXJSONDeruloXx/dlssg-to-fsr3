@@ -1,0 +1,165 @@
+name: Release dlssg-to-fsr3
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release'
+        required: true
+        type: string
+
+env:
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    
+    strategy:
+      matrix:
+        variant: [universal, nvngxwrapper, dtwrapper]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgGitCommitId: '53bef8994c541b6561884a8395ea35715ece75db'
+
+    - name: Export GitHub Actions cache environment variables
+      uses: actions/github-script@v7
+      with:
+        script: |
+          core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+          core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Install Vulkan SDK
+      uses: humbletim/install-vulkan-sdk@v1.1.1
+      with:
+        version: latest
+        cache: true
+
+    - name: Cache FidelityFX SDK build
+      uses: actions/cache@v4
+      with:
+        path: dependencies/FidelityFX-SDK/sdk/bin
+        key: fidelityfx-sdk-${{ runner.os }}-${{ hashFiles('dependencies/FidelityFX-SDK/**/*.cmake', 'dependencies/FidelityFX-SDK/**/*.bat') }}
+        restore-keys: |
+          fidelityfx-sdk-${{ runner.os }}-
+
+    - name: Setup CMake
+      uses: lukka/get-cmake@latest
+
+    - name: Create CMakeUserEnvVars.json
+      shell: pwsh
+      run: |
+        $envVars = @{
+          "version" = 6
+          "configurePresets" = @(
+            @{
+              "name" = "config-envvars"
+              "hidden" = $true
+              "environment" = @{
+                "GAME_ROOT_DIRECTORY" = "C:/temp/game"
+                "GAME_DEBUGGER_CMDLINE" = "C:/temp/game/game.exe"
+              }
+            }
+          )
+        }
+        $envVars | ConvertTo-Json -Depth 10 | Out-File -FilePath "CMakeUserEnvVars.json" -Encoding UTF8
+
+    - name: Build FidelityFX SDK
+      shell: cmd
+      run: |
+        cd dependencies\FidelityFX-SDK\sdk
+        if not exist "bin\ffx_sdk" call BuildFidelityFXSDK.bat
+        if not exist "bin\ffx_sdk" (
+          echo "FidelityFX SDK build failed"
+          exit /b 1
+        )
+
+    - name: Configure CMake
+      uses: lukka/run-cmake@v10
+      with:
+        configurePreset: 'final-${{ matrix.variant }}'
+
+    - name: Build Release
+      uses: lukka/run-cmake@v10
+      with:
+        buildPreset: 'final-${{ matrix.variant }}-Release'
+
+    - name: Package
+      shell: pwsh
+      run: |
+        cpack --preset final-${{ matrix.variant }}
+
+    - name: Upload release artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: dlssg-to-fsr3-${{ matrix.variant }}-release
+        path: bin/built-packages/*.zip
+        retention-days: 90
+
+  create-release:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    if: always() && needs.build-and-release.result == 'success'
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        pattern: dlssg-to-fsr3-*-release
+        merge-multiple: true
+
+    - name: Get tag name
+      id: tag
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+        else
+          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.tag.outputs.tag }}
+        name: Release ${{ steps.tag.outputs.tag }}
+        files: '*.zip'
+        draft: false
+        prerelease: false
+        body: |
+          ## dlssg-to-fsr3 ${{ steps.tag.outputs.tag }}
+          
+          This release includes:
+          - **Universal Edition**: Drop-in replacement DLLs (version.dll, winhttp.dll, dbghelp.dll)
+          - **NVNGX Edition**: Direct nvngx.dll replacement (requires registry modification)
+          - **DLSSTweaks Edition**: Compatible with DLSSTweaks mod
+          
+          ### Installation Instructions
+          
+          Please refer to the README.md for detailed installation instructions for each edition.
+          
+          ### Compatibility
+          
+          - **Supported GPUs**: RTX 1600, RTX 2000, RTX 3000 series
+          - **Game Compatibility**: Check the [Game Compatibility List](https://github.com/Nukem9/dlssg-to-fsr3/wiki/Game-Compatibility-List)
+          - **Warning**: Not recommended for multiplayer games due to potential account bans
+          
+          ### What's New
+          
+          See the CHANGELOG section in README.md for detailed changes in this release.
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
