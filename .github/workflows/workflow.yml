@@ -97,3 +97,35 @@ jobs:
           path: |
             ${{ github.workspace }}/bin/built-packages/*.zip
           if-no-files-found: error
+
+      - name: Generate release tag
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+        id: tag
+        shell: pwsh
+        run: |
+          $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+          $tag = "release-$timestamp"
+          echo "tag=$tag" >> $env:GITHUB_OUTPUT
+          echo "Generated tag: $tag"
+
+      - name: Create Release
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "DLSSG to FSR3 - ${{ steps.tag.outputs.tag }}"
+          body: |
+            Automated release built from commit ${{ github.sha }}
+            
+            **Changes in this release:**
+            - Built from latest ${{ github.ref_name }} branch
+            - Commit: ${{ github.sha }}
+            - Workflow run: ${{ github.run_number }}
+            
+            **Installation:**
+            Download the appropriate ZIP file for your use case and follow the installation instructions in the README.
+          files: |
+            ${{ github.workspace }}/bin/built-packages/*.zip
+          draft: false
+          prerelease: false
+          make_latest: true
