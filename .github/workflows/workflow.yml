@@ -63,7 +63,7 @@ jobs:
           Expand-Archive -Path $pixZip -DestinationPath $pixDir -Force
           
           # Copy the DLL to the expected location
-          $dllSource = "$pixDir\runtimes\win-x64\native\WinPixEventRuntime.dll"
+          $dllSource = "$pixDir\bin\x64\WinPixEventRuntime.dll"
           $dllTarget = "${{ github.workspace }}\dependencies\FidelityFX-SDK\sdk\libs\pix\bin\x64\WinPixEventRuntime.dll"
           
           if (Test-Path $dllSource) {
