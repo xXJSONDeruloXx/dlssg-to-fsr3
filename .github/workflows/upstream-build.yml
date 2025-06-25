@@ -1,6 +1,8 @@
 name: 'Build and publish upstream artifacts'
 
 on:
+  push:
+    branches: ['build-upstream']
   repository_dispatch:
     types: [upstream_update]
   workflow_dispatch:
@@ -39,15 +41,21 @@ jobs:
           $upstreamBranch = 'master'
           $upstreamCommit = ''
           
-          # Check if we're running from repository_dispatch or workflow_dispatch
+          # Check which event triggered the workflow
           if ('${{ github.event_name }}' -eq 'repository_dispatch') {
+            # Triggered by upstream monitor
             $upstreamRepo = '${{ github.event.client_payload.upstream_repo }}'
             $upstreamBranch = '${{ github.event.client_payload.upstream_branch }}'
             $upstreamCommit = '${{ github.event.client_payload.upstream_commit }}'
-          } else {
+          } elseif ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            # Triggered manually
             $upstreamRepo = '${{ github.event.inputs.upstream_repo }}'
             $upstreamBranch = '${{ github.event.inputs.upstream_branch }}'
             $upstreamCommit = '${{ github.event.inputs.upstream_commit }}'
+          } else {
+            # Triggered by push to build-upstream branch
+            # Use default values (already set above)
+            Write-Host "Triggered by push to build-upstream branch. Using upstream defaults."
           }
           
           echo "upstream_repo=$upstreamRepo" >> $env:GITHUB_OUTPUT
@@ -160,6 +168,11 @@ jobs:
             - Repository: ${{ steps.upstream-info.outputs.upstream_repo }}
             - Branch: ${{ steps.upstream-info.outputs.upstream_branch }}
             - Commit: ${{ steps.upstream-info.outputs.upstream_commit || 'latest from branch' }}
+            
+            **Build Trigger:**
+            - Event: ${{ github.event_name }}
+            - Workflow: ${{ github.workflow }}
+            - Run ID: ${{ github.run_id }}
             
             **Installation:**
             Download the appropriate ZIP file for your use case and follow the installation instructions in the README.
