@@ -180,4 +180,4 @@ jobs:
             ${{ github.workspace }}/bin/built-packages/*.zip
           draft: false
           prerelease: false
-          make_latest: false
+          make_latest: true
