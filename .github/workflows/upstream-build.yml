@@ -1,0 +1,170 @@
+name: 'Build and publish upstream artifacts'
+
+on:
+  repository_dispatch:
+    types: [upstream_update]
+  workflow_dispatch:
+    inputs:
+      upstream_repo:
+        description: 'Upstream repository in owner/repo format'
+        required: false
+        default: 'Nukem9/dlssg-to-fsr3'
+      upstream_branch:
+        description: 'Upstream branch to build from'
+        required: false
+        default: 'master'
+      upstream_commit:
+        description: 'Specific upstream commit SHA to build (optional)'
+        required: false
+
+permissions:
+  contents: write
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  VCPKG_FEATURE_FLAGS: dependencygraph
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+jobs:
+  build-upstream:
+    runs-on: windows-2022
+
+    steps:
+      - name: Determine upstream repository and branch
+        id: upstream-info
+        shell: pwsh
+        run: |
+          # Set default values
+          $upstreamRepo = 'Nukem9/dlssg-to-fsr3'
+          $upstreamBranch = 'master'
+          $upstreamCommit = ''
+          
+          # Check if we're running from repository_dispatch or workflow_dispatch
+          if ('${{ github.event_name }}' -eq 'repository_dispatch') {
+            $upstreamRepo = '${{ github.event.client_payload.upstream_repo }}'
+            $upstreamBranch = '${{ github.event.client_payload.upstream_branch }}'
+            $upstreamCommit = '${{ github.event.client_payload.upstream_commit }}'
+          } else {
+            $upstreamRepo = '${{ github.event.inputs.upstream_repo }}'
+            $upstreamBranch = '${{ github.event.inputs.upstream_branch }}'
+            $upstreamCommit = '${{ github.event.inputs.upstream_commit }}'
+          }
+          
+          echo "upstream_repo=$upstreamRepo" >> $env:GITHUB_OUTPUT
+          echo "upstream_branch=$upstreamBranch" >> $env:GITHUB_OUTPUT
+          echo "upstream_commit=$upstreamCommit" >> $env:GITHUB_OUTPUT
+          
+          echo "Building from upstream repository: $upstreamRepo branch: $upstreamBranch commit: $upstreamCommit"
+
+      - name: Checkout upstream repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.upstream-info.outputs.upstream_repo }}
+          ref: ${{ steps.upstream-info.outputs.upstream_commit || steps.upstream-info.outputs.upstream_branch }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up GitHub Actions cache environment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      # https://github.com/actions/runner-images/issues/6376
+      - name: Set up Vcpkg environment
+        shell: bash
+        run: |
+          echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> $GITHUB_ENV
+
+      # Custom step is required because vcvarsall doesn't persist otherwise. VS2022 is the only option on windows-2022 runners.
+      - name: Set up VS2022 toolset
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install and set up Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.4.309.0
+          cache: true
+
+      - name: Install WinPixEventRuntime
+        shell: pwsh
+        run: |
+          # Download the DLL directly from NuGet package
+          $pixUrl = "https://www.nuget.org/api/v2/package/WinPixEventRuntime/1.0.240308001"
+          $pixZip = "$env:TEMP\WinPixEventRuntime.zip"
+          $pixDir = "$env:TEMP\WinPixEventRuntime"
+          
+          Write-Host "Downloading WinPixEventRuntime package..."
+          Invoke-WebRequest -Uri $pixUrl -OutFile $pixZip
+          Expand-Archive -Path $pixZip -DestinationPath $pixDir -Force
+          
+          # Copy the DLL to the expected location
+          $dllSource = "$pixDir\bin\x64\WinPixEventRuntime.dll"
+          $dllTarget = "${{ github.workspace }}\dependencies\FidelityFX-SDK\sdk\libs\pix\bin\x64\WinPixEventRuntime.dll"
+          
+          if (Test-Path $dllSource) {
+            New-Item -ItemType Directory -Path (Split-Path $dllTarget -Parent) -Force
+            Copy-Item -Path $dllSource -Destination $dllTarget -Force
+            Write-Host "WinPixEventRuntime.dll copied to: $dllTarget"
+          } else {
+            Write-Host "WinPixEventRuntime.dll not found in package, continuing without it"
+          }
+
+      - name: Build and set up FidelityFX SDK
+        shell: cmd
+        run: |
+          echo "Updating FidelityFX SDK submodules..."
+          cd dependencies\FidelityFX-SDK
+          git submodule update --init --recursive
+          cd ..\..
+          echo "Building FidelityFX SDK..."
+          ${{ github.workspace }}/dependencies/Build-FFX-SDK.bat
+
+      # All variants get built here since I don't want to burn my action minutes on the Vulkan and FFX SDKs
+      - name: Build dlssg-to-fsr3
+        shell: pwsh
+        run: |
+          ${{ github.workspace }}/Make-Release.ps1
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: 'dlssg-to-fsr3-upstream-build'
+          path: |
+            ${{ github.workspace }}/bin/built-packages/*.zip
+          if-no-files-found: error
+
+      - name: Generate release tag
+        id: tag
+        shell: pwsh
+        run: |
+          $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+          $commitShort = '${{ steps.upstream-info.outputs.upstream_commit }}' -ne '' ? '${{ steps.upstream-info.outputs.upstream_commit }}'.Substring(0, 8) : 'latest'
+          $tag = "upstream-release-$timestamp"
+          echo "tag=$tag" >> $env:GITHUB_OUTPUT
+          echo "commit_short=$commitShort" >> $env:GITHUB_OUTPUT
+          echo "Generated tag: $tag"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "DLSSG to FSR3 [UPSTREAM] - ${{ steps.tag.outputs.tag }}"
+          body: |
+            Automated release built from upstream repository Nukem9/dlssg-to-fsr3
+            
+            **Upstream Details:**
+            - Repository: ${{ steps.upstream-info.outputs.upstream_repo }}
+            - Branch: ${{ steps.upstream-info.outputs.upstream_branch }}
+            - Commit: ${{ steps.upstream-info.outputs.upstream_commit || 'latest from branch' }}
+            
+            **Installation:**
+            Download the appropriate ZIP file for your use case and follow the installation instructions in the README.
+          files: |
+            ${{ github.workspace }}/bin/built-packages/*.zip
+          draft: false
+          prerelease: false
+          make_latest: false
